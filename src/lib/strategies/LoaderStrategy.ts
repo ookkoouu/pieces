@@ -1,5 +1,6 @@
 import { isNullish } from '@sapphire/utilities';
-import { basename, extname } from 'path';
+import { readFileSync } from 'fs';
+import { basename, dirname, extname, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { MissingExportsError } from '../errors/MissingExportsError';
 import { mjsImport } from '../internal/internal';
@@ -8,6 +9,17 @@ import type { Piece } from '../structures/Piece';
 import type { Store } from '../structures/Store';
 import type { AsyncPreloadResult, FilterResult, ILoaderResult, ILoaderResultEntry, ILoaderStrategy, ModuleData } from './ILoaderStrategy';
 import { classExtends, isClass } from './Shared';
+
+async function listRequires(filepath: string): string[] {
+	filepath = resolve(filepath);
+	if (!filepath.endsWith('js')) return [];
+	const fileContent = readFileSync(filepath).toString();
+	const moduleNames = [...fileContent.matchAll(/(require\(["'])(.+?)(["']\))/g)].map((m) => m[2]);
+	const modulePaths = moduleNames
+		.map((n) => require.resolve(n, { paths: [dirname(filepath)] }))
+		.filter((p) => p.match(/\.(cjs|mjs|js)$/) && !p.includes('node_modules'));
+	return modulePaths;
+}
 
 /**
  * A multi-purpose feature-complete loader strategy supporting multi-piece modules as well as supporting both ECMAScript
@@ -58,9 +70,13 @@ export class LoaderStrategy<T extends Piece> implements ILoaderStrategy<T> {
 			return mjsImport(url);
 		}
 
+		for (const modulePath of await listRequires(file.path)) {
+			delete require.cache[modulePath];
+		}
+
+		delete require.cache[require.resolve(file.path)];
 		// eslint-disable-next-line @typescript-eslint/no-var-requires
 		const mod = require(file.path);
-		delete require.cache[require.resolve(file.path)];
 		return mod;
 	}
 
